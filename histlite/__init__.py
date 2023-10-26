@@ -8,6 +8,7 @@ import inspect
 import itertools
 import os
 import warnings
+from collections import namedtuple
 
 import numpy as np
 from scipy import interpolate, ndimage, optimize, stats
@@ -1187,7 +1188,7 @@ def _regularize_data(data):
 def hist(data, weights=None,
           bins=10, range=None, log=False,
           round_int_bins=False,
-          keep_data=False):
+          keep_data=False, return_scipy_indices=False):
 
     """Factory function for :class:`Hist`.
 
@@ -1321,18 +1322,22 @@ def hist(data, weights=None,
                 bins[dim] = int((xmax - xmin) / dx(xmin, xmax, n))
 
 
-
     # build histogram
-    values, edges = np.histogramdd(data, weights=weights,
-            bins=bins, range=np_range)
-    errors = np.sqrt(np.histogramdd(data, weights=weights**2,
-            bins=bins, range=np_range)[0])
+    values, edges, binnumber = res = stats.binned_statistic_dd(
+        data, weights, "sum", bins=bins, range=np_range)
+
+    errors = np.sqrt(stats.binned_statistic_dd(
+        data, weights**2, "sum", binned_statistic_result=res)[0])
 
     others = dict(data=data, weights=weights) if keep_data else {}
 
-    return Hist(edges, values, errors=errors, **others)
+    h = Hist(edges, values, errors=errors, **others)
+    if return_scipy_indices:
+        return h, binnumber
+    else:
+        return h
 
-def hist_like(other, data, weights=None, keep_data=False):
+def hist_like(other, data, weights=None, keep_data=False, return_scipy_indices=False):
     """Create a :class:`Hist` using the same binning as ``other``.
 
     :type   other: :class:`Hist`
@@ -1351,14 +1356,21 @@ def hist_like(other, data, weights=None, keep_data=False):
     if len(np.shape(data)) > 1:
         data = np.transpose(data)
     bins = other.bins
-    values, bins = np.histogramdd(data, bins=bins, weights=weights)
+    values, bins, binnumber = res = stats.binned_statistic_dd(
+        data, weights, "sum", bins=bins)
     if weights is not None:
-        sq_errors, bins = np.histogramdd(data, bins=bins, weights=weights**2)
-        errors = np.sqrt(sq_errors)
+        errors = np.sqrt(stats.binned_statistic_dd(
+            data, weights**2, "sum", binned_statistic_result=res)[0])
     else:
         errors = np.sqrt(values)
+
     others = dict(data=data, weights=weights) if keep_data else {}
-    return Hist(bins, values, errors, **others)
+
+    h = Hist(edges, values, errors=errors, **others)
+    if return_scipy_indices:
+        return h, binnumber
+    else:
+        return h
 
 def hist_like_indices(other, ravel_indices, weights=None):
     """
@@ -1386,7 +1398,19 @@ def hist_like_indices(other, ravel_indices, weights=None):
     return Hist(bins, values.reshape(shape), errors.reshape(shape))
 
 
-def hist_direct(data, weights=None, bins=None, range=None, keep_data=False):
+_BinnedStatisticResult = namedtuple('_BinnedStatisticResult',
+                                   ('statistic', 'bin_edges', 'binnumber'))
+def hist_like_scipy_indices(other, data, scipy_indices, weights=None):
+    if weights is None:
+        weights = np.ones_like(other.values)
+    res = _BinnedStatisticResult(None, other.bins, scipy_indices)
+    values, bins, _ = stats.binned_statistic_dd(
+        data, weights, "sum", binned_statistic_result=res)
+    errors = np.sqrt(stats.binned_statistic_dd(
+        data, weights**2, "sum", binned_statistic_result=res)[0])
+    return Hist(bins, values, errors)
+
+def hist_direct(data, weights=None, bins=None, range=None, keep_data=False, return_ravel_indices=False):
     """Fast factory function for :class:`Hist`.
 
     :type   data: array-like
@@ -1414,16 +1438,21 @@ def hist_direct(data, weights=None, bins=None, range=None, keep_data=False):
     """
     if len(np.shape(data)) > 1:
         data = np.transpose(data)
-    values, bins = np.histogramdd(
-        data, bins=bins, range=range, weights=weights)
+    values, bins, binnumber = res = stats.binned_statistic_dd(
+        data, weights, "sum", bins=bins, range=range)
     if weights is not None:
-        sq_errors, bins = np.histogramdd(
-            data, bins=bins, range=range, weights=weights**2)
-        errors = np.sqrt(sq_errors)
+        errors = np.sqrt(stats.binned_statistic_dd(
+            data, weights, "sum", binned_statistic_result=res)[0])
     else:
         errors = np.sqrt(values)
+
     others = dict(data=data, weights=weights) if keep_data else {}
-    return Hist(bins, values, errors, **others)
+
+    h = Hist(edges, values, errors=errors, **others)
+    if return_ravel_indices:
+        return h, binnumber
+    else:
+        return h
 
 def hist_from_function(bins, func, *args, **kwargs):
     """
