@@ -21,6 +21,7 @@ except:
 
 
 from . import version
+from .binned_statistic import binned_statistic_dd
 
 try:
     from . import heal
@@ -1254,9 +1255,8 @@ def hist(data, weights=None,
         weights = np.ones(n_samples)
 
     # ignore non-finite values
-    good_idx = np.isfinite(weights)
-    for dim in xrange(n_dims):
-        good_idx *= np.isfinite(data[dim])
+    weights[~np.isfinite(weights)] = 0
+    good_idx = np.all(np.isfinite(data), axis=0)
 
     # ensure ranges
     if np.sum(good_idx) == 0:
@@ -1296,7 +1296,7 @@ def hist(data, weights=None,
 
 
     data = tuple(a[good_idx] for a in data)
-    weights = weights[good_idx]
+    weights = weights[..., good_idx]
 
     if bins:
         if len(data) != len(bins):
@@ -1323,11 +1323,9 @@ def hist(data, weights=None,
 
 
     # build histogram
-    values, edges, binnumber = res = stats.binned_statistic_dd(
-        data, weights, "sum", bins=bins, range=np_range)
-
-    errors = np.sqrt(stats.binned_statistic_dd(
-        data, weights**2, "sum", binned_statistic_result=res)[0])
+    (values, sq_errors), edges, binnumber = res = binned_statistic_dd(
+        data, [weights, weights**2], "sum", bins=bins, range=np_range)
+    errors = np.sqrt(sq_errors)
 
     others = dict(data=data, weights=weights) if keep_data else {}
 
@@ -1356,12 +1354,13 @@ def hist_like(other, data, weights=None, keep_data=False, return_scipy_indices=F
     if len(np.shape(data)) > 1:
         data = np.transpose(data)
     bins = other.bins
-    values, bins, binnumber = res = stats.binned_statistic_dd(
-        data, weights, "sum", bins=bins)
     if weights is not None:
-        errors = np.sqrt(stats.binned_statistic_dd(
-            data, weights**2, "sum", binned_statistic_result=res)[0])
+        (values, sq_errors), bins, binnumber = binned_statistic_dd(
+            data, [weights, weights**2], "sum", binned_statistic_result=res)
+        errors = np.sqrt(sq_errors)
     else:
+        values, bins, binnumber = res = binned_statistic_dd(
+            data, weights, "count", bins=bins)
         errors = np.sqrt(values)
 
     others = dict(data=data, weights=weights) if keep_data else {}
@@ -1404,10 +1403,10 @@ def hist_like_scipy_indices(other, data, scipy_indices, weights=None):
     if weights is None:
         weights = np.ones_like(other.values)
     res = _BinnedStatisticResult(None, other.bins, scipy_indices)
-    values, bins, _ = stats.binned_statistic_dd(
-        data, weights, "sum", binned_statistic_result=res)
-    errors = np.sqrt(stats.binned_statistic_dd(
-        data, weights**2, "sum", binned_statistic_result=res)[0])
+    (values, sq_errors), bins, _ = binned_statistic_dd(
+        data, [weights, weights**2], "sum", binned_statistic_result=res)
+    errors = np.sqrt(sq_errors)
+
     return Hist(bins, values, errors)
 
 def hist_direct(data, weights=None, bins=None, range=None, keep_data=False, return_ravel_indices=False):
@@ -1438,12 +1437,15 @@ def hist_direct(data, weights=None, bins=None, range=None, keep_data=False, retu
     """
     if len(np.shape(data)) > 1:
         data = np.transpose(data)
-    values, bins, binnumber = res = stats.binned_statistic_dd(
+    values, bins, binnumber = res = binned_statistic_dd(
         data, weights, "sum", bins=bins, range=range)
     if weights is not None:
-        errors = np.sqrt(stats.binned_statistic_dd(
-            data, weights, "sum", binned_statistic_result=res)[0])
+        (values, sq_errors), bins, binnumber = binned_statistic_dd(
+            data, [weights, weights**2], "sum", binned_statistic_result=res)
+        errors = np.sqrt(sq_errors)
     else:
+        values, bins, binnumber = res = binned_statistic_dd(
+            data, weights, "count", bins=bins)
         errors = np.sqrt(values)
 
     others = dict(data=data, weights=weights) if keep_data else {}
